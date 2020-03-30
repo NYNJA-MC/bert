@@ -29,26 +29,41 @@ to_lower(Name) ->
   [Hd | Tail] = Name,
   [string:to_lower(Hd)] ++ Tail.
 
-parse_transform(Forms, _Options) ->
-  file:delete("temp.txt"),
-  {Bin,Module} = directives(Forms),
-  File = filename:join([?ERL, lists:concat([Module,".erl"])]),
-  io:format("Generated Models Validator: ~p~n", [File]),
-  file:write_file(File, Bin),
-  Forms.
 
-directives(Forms) -> R = lists:flatten([form(F) || F <- Forms]),
-   { iolist_to_binary([prelude(),lists:sublist(R,1, length(R) - 1) ++ "."]), lists:concat([get({module}),"_validator"]) }.
+%% Insane, creating an Erlang file as side effect
+parse_transform(Forms, Options) ->
+    AF = erl_syntax_lib:analyze_forms(Forms),
+    Module = proplists:get_value(module, AF),
+    CompileOpts =
+        lists:foldl(fun({compile, Opts}, Acc) when is_list(Opts) -> Acc ++ Opts;
+                       ({compile, Opt}, Acc) -> Acc ++ [Opt];
+                       (_, Acc) -> Acc
+                    end, Options, proplists:get_value(attributes, AF, [])),
+    Dest = proplists:get_value(bert_erl, CompileOpts, ?ERL),
 
-form({attribute,_, record, {List, T}}) -> [validate(List, T)];
-form({attribute,_, module, Name}) -> put({module},Name), [];
-form({attribute,_, file, {HRL,_}}) ->
-   case filename:extension(HRL) of
-        ".hrl" -> put({imports}, [HRL]
-            ++ case get({imports}) of undefined -> []; Y -> Y end),
-            [];
-        _ -> [] end;
-form(_Form) -> [].
+    Context = #{dest_dir => filename:join(Dest, Module),
+                module => Module,
+                imports => [],
+                disallowed => proplists:get_value(bert_disallowed, Options, [])},
+
+    %% file:delete("temp.txt"),
+    Bin = directives(Forms, Context),
+    File = filename:join(Dest, lists:concat([Module, "_validator",".erl"])),
+    filelib:ensure_dir(File),
+    io:format("Generated Models Validator: ~p~n", [File]),
+    file:write_file(File, Bin),
+    Forms.
+
+directives(Forms, Context) ->
+    NewForms = lists:foldl(fun(F, Fs) ->
+                              Acc ++ [form(F, Context)]
+                           end, [], Forms),
+    R = lists:flatten([form(F, Context) || F <- Forms]),
+    iolist_to_binary([prelude(Context),
+                      lists:sublist(R, 1, length(R) - 1) ++ "."]).
+
+form({attribute,_, record, {Name, T}}) -> [validate(Name, T)];
+form(Form) -> [Form].
 
 validate(List, T) ->
   Class = lists:concat([List]),
@@ -58,22 +73,22 @@ validate(List, T) ->
               {_,{_,_,{atom,_,Field},{_,_,_Value}},Args}         -> {lists:concat([Field]),Args};
               _                                                  -> []
             end || Data <- T],
-  case valid(Fields,Class,[]) of
-    {[_ | _] = Model, [_ | _] = When, [_ | _] = Validation} ->
-      D = lists:flatten([Item || Item <- Validation, is_tuple(Item)]),
-      V0 = "\n\tCondFuns = ["   ++ string:join(["?COND_FUN(is_record(Rec, '"++ atom_to_list(C) ++ "'))" || {_,C} <- D], ",") ++ "],",
-      V = "\n\tFields = ["      ++ string:join([case F of {I,_} -> I; I -> I end || F <- D, F /= []], ",") ++ "],",
-      V1 = "\n\tFieldNames = [" ++ string:join([case F of {I,_} -> to_lower(I); I -> to_lower(I) end || F <- D, F /= []], ",") ++ "],",
-      "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) -> \n\t" ++ ?Valid_Start ++ When ++ ?Valid_End(Class) ++ V0 ++ V ++ V1 ++ ?Valid_fun;
-    {[_ | _] = Model, [], [_ | _] = Validation} ->
-      V = "\nvalidate([" ++ string:join([Item || Item <- Validation, Item /= []], ",") ++ "])",
-      "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) -> \n\t" ++ V ++ ";";
-    {[_ | _] = Model, [], []} ->
-      "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) -> \n\t" ++ " -> ok;";
-    {[_ | _] = Model, [_ | _] = When, []} ->
-      "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) -> \n\t" ++ ?Valid_Start ++ When ++ ?Valid_End(Class) ++ ?Valid_fun_empty;
-    _ -> ""
-  end.
+    case valid(Fields, Class, []) of
+        {[_ | _] = Model, [_ | _] = When, [_ | _] = Validation} ->
+            D = lists:flatten([Item || Item <- Validation, is_tuple(Item)]),
+            V0 = "\n\tCondFuns = ["   ++ string:join(["?COND_FUN(is_record(Rec, '"++ atom_to_list(C) ++ "'))" || {_,C} <- D], ",") ++ "],",
+            V = "\n\tFields = ["      ++ string:join([case F of {I,_} -> I; I -> I end || F <- D, F /= []], ",") ++ "],",
+            V1 = "\n\tFieldNames = [" ++ string:join([case F of {I,_} -> to_lower(I); I -> to_lower(I) end || F <- D, F /= []], ",") ++ "],",
+            "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) -> \n\t" ++ ?Valid_Start ++ When ++ ?Valid_End(Class) ++ V0 ++ V ++ V1 ++ ?Valid_fun;
+        {[_ | _] = Model, [], [_ | _] = Validation} ->
+            V = "\nvalidate([" ++ string:join([Item || Item <- Validation, Item /= []], ",") ++ "])",
+            "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) -> \n\t" ++ V ++ ";";
+        {[_ | _] = Model, [], []} ->
+            "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) -> \n\t" ++ " -> ok;";
+        {[_ | _] = Model, [_ | _] = When, []} ->
+            "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) -> \n\t" ++ ?Valid_Start ++ When ++ ?Valid_End(Class) ++ ?Valid_fun_empty;
+        _ -> ""
+    end.
 
 valid([],_Class, Acc) ->
   {Model, Data} = lists:unzip(Acc),
@@ -138,27 +153,27 @@ get_fields(Name, Type) ->
         end,
   lists:concat([Name, " = ", Res]).
 
-prelude() ->
-  S = lists:flatten([io_lib:format("-include(\"~s\").~n",[X])||X<-lists:usort(get({imports}))]),
+prelude(#{imports := Imports, module := Module}) ->
+  S = lists:flatten([io_lib:format("-include(\"~s\").~n",[X]) || X <- lists:usort(get({imports}))]),
   lists:concat([
-    "-module(", get({module}), "_validator).
-"++S++"-compile(export_all).
--define(COND_FUN(Cond), fun(Rec) when Cond -> true; (_) -> false end).
-
-validate(Obj) -> validate(Obj, []).
-validate(_, [{[_|_] , _R}|_] = Acc) -> {error, Acc};
-validate([], _) -> ok;
-validate(Objs, [{[] , R}|T]) -> validate(Objs, [R|T]);
-validate([{CondFun, _, []}|T], Acc) when is_function(CondFun) -> validate(T, Acc);
-validate([{CondFun, Field, [Obj|TObjs]}|T], Acc) when is_function(CondFun) ->
-  case CondFun(Obj) of
-    true -> validate([{CondFun, Field, TObjs}|T], Acc);
-    false -> {error, [Field, Obj|Acc]} end;
-validate([{CondFun, Field, Obj}|T], Acc) when is_function(CondFun) ->
-  case CondFun(Obj) of true -> validate(T, Acc); false -> {error, [Field, Obj|Acc]} end;
-validate([{_Field, []}|T], Acc) -> validate(T, Acc);
-validate([{Field, [Obj|TObjs]}|T], Acc) ->
-  case validate(Obj, [Field|Acc]) of
-    ok -> validate([{Field, TObjs}|T], Acc);
-    Err -> Err end;\n"]).
-
+                "-module(", get({module}), "_validator).\n"
+                ++ S ++
+                "-compile(export_all).\n"
+                "-define(COND_FUN(Cond), fun(Rec) when Cond -> true; (_) -> false end).\n"
+                "validate(Obj) -> validate(Obj, []).\n"
+                "validate(_, [{[_|_] , _R}|_] = Acc) -> {error, Acc};\n"
+                "validate([], _) -> ok;\n"
+                "validate(Objs, [{[] , R}|T]) -> validate(Objs, [R|T]);\n"
+                "validate([{CondFun, _, []}|T], Acc) when is_function(CondFun) -> validate(T, Acc);\n"
+                "validate([{CondFun, Field, [Obj|TObjs]}|T], Acc) when is_function(CondFun) ->\n"
+                "    case CondFun(Obj) of\n"
+                "        true -> validate([{CondFun, Field, TObjs}|T], Acc);\n"
+                "        false -> {error, [Field, Obj|Acc]} end;\n"
+                "validate([{CondFun, Field, Obj}|T], Acc) when is_function(CondFun) ->\n"
+                "    case CondFun(Obj) of true -> validate(T, Acc); false -> {error, [Field, Obj|Acc]} end;\n"
+                "validate([{_Field, []}|T], Acc) -> validate(T, Acc);\n"
+                "validate([{Field, [Obj|TObjs]}|T], Acc) ->\n"
+                "    case validate(Obj, [Field|Acc]) of\n"
+                "        ok -> validate([{Field, TObjs}|T], Acc);\n"
+                "        Err -> Err\n"
+                "    end;\n"]).
