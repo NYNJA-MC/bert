@@ -55,15 +55,15 @@ parse_transform(Forms, Options) ->
     Forms.
 
 directives(Forms, Context) ->
-    NewForms = lists:foldl(fun(F, Fs) ->
+    NewForms = lists:foldl(fun(F, Acc) ->
                               Acc ++ [form(F, Context)]
                            end, [], Forms),
-    R = lists:flatten([form(F, Context) || F <- Forms]),
+    R = lists:flatten([oldform(F, Context) || F <- Forms]),
     iolist_to_binary([prelude(Context),
                       lists:sublist(R, 1, length(R) - 1) ++ "."]).
 
-form({attribute,_, record, {Name, T}}) -> [validate(Name, T)];
-form(Form) -> [Form].
+form({attribute,_, record, {Name, T}}, Context) -> [validate(Name, T)];
+form(Form, _) -> []. %% [Form].
 
 validate(List, T) ->
   Class = lists:concat([List]),
@@ -154,9 +154,9 @@ get_fields(Name, Type) ->
   lists:concat([Name, " = ", Res]).
 
 prelude(#{imports := Imports, module := Module}) ->
-  S = lists:flatten([io_lib:format("-include(\"~s\").~n",[X]) || X <- lists:usort(get({imports}))]),
+  S = lists:flatten([io_lib:format("-include(\"~s\").~n",[X]) || X <- lists:usort(Imports)]),
   lists:concat([
-                "-module(", get({module}), "_validator).\n"
+                "-module(", Module, "_validator).\n"
                 ++ S ++
                 "-compile(export_all).\n"
                 "-define(COND_FUN(Cond), fun(Rec) when Cond -> true; (_) -> false end).\n"
