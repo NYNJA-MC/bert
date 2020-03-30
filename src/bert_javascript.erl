@@ -3,21 +3,42 @@
 -compile(export_all).
 -include("bert.hrl").
 
-parse_transform(Forms, _Options) ->
-    Files = application:get_env(bert, allowed_hrl, []),
-    NForms = case Files of [] -> Forms; _ -> filter(Forms, Files, {false, []}) end,
-    File = filename:join([?JS, "json-bert.js"]),
+%% Create javascript as side-effect of compilation
+%% Insane
+parse_transform(Forms, Options) ->
+    AF = erl_syntax_lib:analyze_forms(Forms),
+    CompileOpts =
+        lists:foldl(fun({compile, Opts}, Acc) when is_list(Opts) -> Acc ++ Opts;
+                       ({compile, Opt}, Acc) -> Acc ++ [Opt];
+                       (_, Acc) -> Acc
+                    end, Options, proplists:get_value(attributes, AF, [])),
+    case proplists:get_value(bert_allowed_hrl, CompileOpts,
+                             application:get_env(bert, allowed_hrl, [])) of
+        [] -> Forms;
+        HrlFiles ->
+            Dest  = proplists:get_value(bert_js, CompileOpts, ?JS),
+            NForms = filter(Forms, HrlFiles, {false, []}),
+            File = filename:join(Dest, "json-bert.js"),
+            filelib:ensure_dir(File),
     io:format("Generated JavaScript: ~p~n", [File]),
-    file:write_file(File, directives(NForms)), NForms.
+            file:write_file(File, directives(NForms)),
+            Forms
+    end.
 
 filter([], _Files, {_, Acc}) -> Acc;
 filter([HD = {attribute, _, file, {FileName, _}} | Rest], Files, {_, Acc}) ->
   Name = filename:basename(FileName, ".hrl"),
-  filter(Rest, Files, case lists:member(Name, Files) of true -> {true, Acc ++ [HD]};_ -> {false, Acc} end);
-filter([HD | Rest], Files, {true, Acc}) -> filter(Rest, Files, {true, Acc ++ [HD]});
-filter([_HD | Rest], Files, {false, Acc}) -> filter(Rest, Files, {false, Acc}).
+  filter(Rest, Files, case lists:member(Name, Files) of
+                          true -> {true, Acc ++ [HD]};
+                          _ -> {false, Acc}
+                      end);
+filter([HD | Rest], Files, {true, Acc}) ->
+    filter(Rest, Files, {true, Acc ++ [HD]});
+filter([_HD | Rest], Files, {false, Acc}) ->
+    filter(Rest, Files, {false, Acc}).
 
-directives(Forms) -> iolist_to_binary([prelude(),decode(Forms),encode(Forms),[ form(F) || F <- Forms ]]).
+directives(Forms) ->
+    iolist_to_binary([prelude(), decode(Forms), encode(Forms), [ form(F) || F <- Forms ]]).
 
 form({attribute,_,record,{List,T}}) -> [encoder(List,T),decoder(List,T)];
 form(_Form) ->  [].

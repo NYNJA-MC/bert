@@ -71,14 +71,14 @@ save(File,Bin) ->
 
 form({attribute,_,type,{Field,{type,_,union,Atoms},[]}}, Context) ->
     bert:info(?MODULE,"TYPE: ~p~n",[{Field, Atoms}]),
-    io:format("TYPE: ~p~n",[{Field, Atoms}]),
+    %% io:format("TYPE: ~p~n",[{Field, Atoms}]),
     A = [ X || {_,_,X} <- Atoms ],
     svar({deps,Field}, []),
     File = filename(Context, atom_to_list(Field) ++ ".proto"),
     {File, [header(Field, Context), enum(Field,[],A)]};
 form({attribute, _, record, {Name, T}}, Context) ->
     bert:info(?MODULE,"RECORD: ~p~n",[{Name, T}]),
-    io:format("RECORD: ~p~n", [{Name,T}]),
+    %%io:format("RECORD: ~p~n", [{Name,T}]),
 
     svar({deps,Name},[]),
     case lists:member(Name, maps:get(disallowed, Context)) of

@@ -3,18 +3,49 @@
 -compile(export_all).
 -include("bert.hrl").
 
-parse_transform(Forms, _Options) -> switch(directives(Forms)), Forms.
-directives(Forms) -> lists:flatten([ form(F) || F <- Forms ]).
+%% Generate swith code as side-effect of compilation...
+%% Insane, of course
+parse_transform(Forms, Options) ->
+    AF = erl_syntax_lib:analyze_forms(Forms),
+    %% io:format("Module ~p\nOptions ~p\n", [AF, Options]),
+    CompileOpts =
+        lists:foldl(fun({compile, Opts}, Acc) when is_list(Opts) -> Acc ++ Opts;
+                       ({compile, Opt}, Acc) -> Acc ++ [Opt];
+                       (_, Acc) -> Acc
+                    end, Options, proplists:get_value(attributes, AF, [])),
+    Dest = proplists:get_value(bert_swift, CompileOpts, ?SWIFT),
+    Disallowed = proplists:get_value(bert_disallowed, Options, []),
+    filelib:ensure_dir(filename:join([Dest, "Model", "dummy"])),
+    filelib:ensure_dir(filename:join([Dest, "Source", "dummy"])),
+    filelib:ensure_dir(filename:join([Dest, "Spec", "dummy"])),
 
-switch(List) ->
-    file:write_file(filename:join(?SWIFT,"Source/Decoder.swift"),
-    iolist_to_binary(lists:concat([
-       "func parseObject(name: String, body:[Model], tuple: BertTuple) -> AnyObject?\n"
+    Context = #{dest_dir => Dest,
+                disallowed => Disallowed},
+    NForms = lists:foldl(fun({attribute,_,record, {Name, T}}, Acc) ->
+                                  case lists:member(Name, Disallowed) of
+                                      true -> Acc;
+                                      false ->
+                                          case class(Name, T, Context) of
+                                               [] -> Acc;
+                                               _ ->
+                                                   spec(Name, T, Context),
+                                                   Acc ++ [{Name, T}]
+                                           end
+                                  end;
+                            (_, Acc) ->
+                                 Acc
+                         end, [], Forms),
+    switch(NForms, Context),
+    Forms.
+
+switch(List, #{dest_dir := Dest}) ->
+    file:write_file(filename:join([Dest, "Source", "Decoder.swift"]),
+                    iolist_to_binary(["func parseObject(name: String, body:[Model], tuple: BertTuple) -> AnyObject?\n"
        "{\n    switch name {\n",
        [case_rec(X) || X <- lists:flatten(List)],
        "    default: return nil\n"
        "    }\n}"
-    ]))).
+                                    ])).
 
 act(List,union,Args,Field,I) -> act(List,union,Args,Field,I,simple);
 act(List,Name,Args,Field,I) -> act(List,Name,Args,Field,I,keyword).
@@ -34,24 +65,20 @@ case_rec({Atom,T}) ->
          {{_,{_,_,{atom,_,Field},_Value},{type,_,Type,Args}},I} <- lists:zip(T,lists:seq(1,length(T))) ],
     "        return " ++ Var ++ "\n" ]).
 
-form({attribute,_,record,{List,T}}) ->
-    case lists:member(List,application:get_env(bert, disallowed, [])) of
-         true -> [];
-         _ -> case class(List,T) of [] -> []; _ -> spec(List,T), {List,T} end end;
-form(_Form) ->  [].
-
-class(List,T) ->
    %io:format("Swift ~p~n",[{List,T}]),
-   File = filename:join(?SWIFT,"Model/"++atom_to_list(List)++".swift"),
-   %io:format("Generated Swift Model: ~p~n",[File]),
+class(List, T, #{dest_dir := Dest}) ->
+   File = filename:join([Dest, "Model", atom_to_list(List)++".swift"]),
+   io:format("Generated Swift Model: ~p~n",[File]),
    case lists:concat([ io_lib:format("\n    var ~s",
         [ infer(Name,Args,atom_to_list(Field))])
      || {_,{_,_,{atom,_,Field},_Value},{type,_,Name,Args}} <- T ]) of
         [] -> [];
-        Fields -> file:write_file(File,iolist_to_binary(lists:concat(["\nclass ",List," {", Fields, "\n}"]))) end.
+       Fields ->
+           file:write_file(File,iolist_to_binary(lists:concat(["\nclass ",List," {", Fields, "\n}"])))
+   end.
 
-spec(List,T) ->
-    File = filename:join(?SWIFT,"Spec/"++atom_to_list(List)++"_Spec.swift"),
+spec(List, T, #{dest_dir := Dest}) ->
+    File = filename:join([Dest, "Spec", atom_to_list(List)++"_Spec.swift"]),
     %io:format("Generated Swift Spec: ~p~n",[File]),
     file:write_file(File,
     iolist_to_binary("func get_"++atom_to_list(List) ++ "() -> Model {\n  return " ++ premodel(List,T) ++ "}\n")).
