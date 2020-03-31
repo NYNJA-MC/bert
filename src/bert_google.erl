@@ -60,7 +60,7 @@ gen(Forms, Context) ->
                                     {[Gen | Gs], Ctxt}
                             end
                     end, {[], Context}, Forms),
-    io:format("Gens = ~p\n", [Gens]),
+    %% io:format("Gens = ~p\n", [Gens]),
     Gens.
 
 save(File,Bin) ->

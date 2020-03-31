@@ -55,10 +55,10 @@ parse_transform(Forms, Options) ->
     Forms.
 
 directives(Forms, Context) ->
-    NewForms = lists:foldl(fun(F, Acc) ->
-                              Acc ++ [form(F, Context)]
-                           end, [], Forms),
-    R = lists:flatten([oldform(F, Context) || F <- Forms]),
+    %% NewForms = lists:foldl(fun(F, Acc) ->
+    %%                           Acc ++ [form(F, Context)]
+    %%                        end, [], Forms),
+    R = lists:flatten([form(F, Context) || F <- Forms]),
     iolist_to_binary([prelude(Context),
                       lists:sublist(R, 1, length(R) - 1) ++ "."]).
 
