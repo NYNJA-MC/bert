@@ -79,21 +79,21 @@ validate(List, T) ->
             V0 = "\n\tCondFuns = ["   ++ string:join(["?COND_FUN(is_record(Rec, '"++ atom_to_list(C) ++ "'))" || {_,C} <- D], ",") ++ "],",
             V = "\n\tFields = ["      ++ string:join([case F of {I,_} -> I; I -> I end || F <- D, F /= []], ",") ++ "],",
             V1 = "\n\tFieldNames = [" ++ string:join([case F of {I,_} -> to_lower(I); I -> to_lower(I) end || F <- D, F /= []], ",") ++ "],",
-            "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) -> \n\t" ++ ?Valid_Start ++ When ++ ?Valid_End(Class) ++ V0 ++ V ++ V1 ++ ?Valid_fun;
+            "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) ->\n\t" ++ ?Valid_Start ++ When ++ ?Valid_End(Class) ++ V0 ++ V ++ V1 ++ ?Valid_fun;
         {[_ | _] = Model, [], [_ | _] = Validation} ->
             V = "\nvalidate([" ++ string:join([Item || Item <- Validation, Item /= []], ",") ++ "])",
-            "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) -> \n\t" ++ V ++ ";";
+            "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) ->\n\t" ++ V ++ ";";
         {[_ | _] = Model, [], []} ->
-            "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) -> \n\t" ++ " -> ok;";
+            "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) ->\n\t" ++ " -> ok;";
         {[_ | _] = Model, [_ | _] = When, []} ->
-            "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) -> \n\t" ++ ?Valid_Start ++ When ++ ?Valid_End(Class) ++ ?Valid_fun_empty;
+            "\nvalidate(D = #'" ++ Class ++ "'{" ++ Model ++ "}, Acc) ->\n\t" ++ ?Valid_Start ++ When ++ ?Valid_End(Class) ++ ?Valid_fun_empty;
         _ -> ""
     end.
 
 valid([],_Class, Acc) ->
   {Model, Data} = lists:unzip(Acc),
   {When, Validation} = lists:unzip(Data),
-  {string:join([Item || Item <- Model, Item /= []], ", "), string:join([Item || Item <- When, Item /= []], " -> []; \n\t") ++ " -> [];", [Item || Item <- Validation, Item /= []]};
+  {string:join([Item || Item <- Model, Item /= []], ", "), string:join([Item || Item <- When, Item /= []], " -> [];\n\t") ++ " -> [];", [Item || Item <- Validation, Item /= []]};
 valid([Field | Rest], Class, Acc) ->
   case Field of
     {Name, Type} ->
@@ -162,7 +162,7 @@ prelude(#{imports := Imports, module := Module}) ->
                 "-define(COND_FUN(Cond), fun(Rec) when Cond -> true; (_) -> false end).\n"
                 "validate(Obj) -> validate(Obj, []).\n"
                 "validate(_, [{[_|_] , _R}|_] = Acc) -> {error, Acc};\n"
-                "validate([], _) -> ok;\n"
+                "validate([], _) -> [];\n"
                 "validate(Objs, [{[] , R}|T]) -> validate(Objs, [R|T]);\n"
                 "validate([{CondFun, _, []}|T], Acc) when is_function(CondFun) -> validate(T, Acc);\n"
                 "validate([{CondFun, Field, [Obj|TObjs]}|T], Acc) when is_function(CondFun) ->\n"
