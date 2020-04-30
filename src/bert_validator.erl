@@ -160,7 +160,11 @@ prelude(#{imports := Imports, module := Module}) ->
                 ++ S ++
                 "-compile(export_all).\n"
                 "-define(COND_FUN(Cond), fun(Rec) when Cond -> true; (_) -> false end).\n"
-                "validate(Obj) -> validate(Obj, []).\n"
+                "validate(Obj) ->\n"
+                "    case validate(Obj, []) of\n"
+                "        ok -> [];\n"
+                "        Err -> Err\n"
+                "    end.\n\n"
                 "validate(_, [{[_|_] , _R}|_] = Acc) -> {error, Acc};\n"
                 "validate([], _) -> [];\n"
                 "validate(Objs, [{[] , R}|T]) -> validate(Objs, [R|T]);\n"
