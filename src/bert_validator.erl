@@ -5,9 +5,9 @@
 -compile(export_all).
 
 -define(Valid_Start,     "ErrFields = lists:flatten(
-		  [case {Field, F} of\n\t").
--define(Valid_End(Name),"\n\t_ -> Field
-    end || {Field, F} <- lists:zip(record_info(fields, '"++Name++"'), tl(tuple_to_list(D)))]),").
+		  [case {RecField, F} of\n\t").
+-define(Valid_End(Name),"\n\t_ -> RecField
+    end || {RecField, F} <- lists:zip(record_info(fields, '"++Name++"'), tl(tuple_to_list(D)))]),").
 -define(Valid_fun, "	case validate(lists:zip3(CondFuns, FieldNames, Fields), [{ErrFields, D}|Acc]) of
 		ok -> validate(lists:zip(FieldNames,Fields), [{ErrFields, D}|Acc]);
 		Err -> Err
@@ -62,8 +62,8 @@ directives(Forms, Context) ->
     iolist_to_binary([prelude(Context),
                       lists:sublist(R, 1, length(R) - 1) ++ "."]).
 
-form({attribute,_, record, {Name, T}}, Context) -> [validate(Name, T)];
-form(Form, _) -> []. %% [Form].
+form({attribute,_, record, {Name, T}}, _Context) -> [validate(Name, T)];
+form(_Form, _) -> []. %% [Form].
 
 validate(List, T) ->
   Class = lists:concat([List]),
@@ -104,13 +104,14 @@ valid([Field | Rest], Class, Acc) ->
     _ -> []
   end.
 
-get_data(Type,Class, Name)        -> {get_fields(Name, Type), get_type(Type, to_upper(Name), Class)}.
+get_data(Type, Class, Name) ->
+    {get_fields(Name, Type), get_type(Type, to_upper(Name), Class)}.
 
 get_type({integer,_},Name,_)                                -> {"{" ++to_lower(Name) ++ ",_} when is_integer("++Name++")",[]};
 get_type({list,[{type,_,record,[{atom,_,C}]}]},Name,_)      -> {"{" ++to_lower(Name) ++ ",_} when is_list("++Name++")",{Name,C}};
 get_type({list,[{type,_,union, R}]},Name,_) when is_list(R) -> {"{" ++to_lower(Name) ++ ",_} when is_list("++Name++")",Name};%split(R,Name,{[],[]});
 get_type({list,_},Name,_)                                   -> {"{" ++to_lower(Name) ++ ",_} when is_list("++Name++")",[]};
-get_type({record,[{atom,_,_}]},Name,Class)                  -> {"{" ++to_lower(Name) ++ ",_} when is_record("++Name++",'"++Class++"')",[]};
+get_type({record,[{atom,_,Record}]},Name,Class)             -> {"{" ++to_lower(Name) ++ ",_} when is_record("++Name++",'"++atom_to_list(Record)++"')",[]};
 get_type({term,[]},Name,_)                                  -> {"{"++to_lower(Name)++",_}",[]};
 get_type({union,R},Name,Class) when is_list(R)              -> split(R,Name,Class,{[],[]});
 get_type({tuple,_},Name,_)                                  -> {"{" ++to_lower(Name) ++ ",_} when is_tuple("++Name++")",[]};
@@ -155,9 +156,11 @@ get_fields(Name, Type) ->
 
 prelude(#{imports := Imports, module := Module}) ->
   S = lists:flatten([io_lib:format("-include(\"~s\").~n",[X]) || X <- lists:usort(Imports)]),
+  TimeStamp = calendar:system_time_to_rfc3339(erlang:system_time(second)),
   lists:concat([
                 "-module(", Module, "_validator).\n"
-                ++ S ++
+                "%% Generate at ",  TimeStamp, "\n",
+                S,
                 "-compile(export_all).\n"
                 "-define(COND_FUN(Cond), fun(Rec) when Cond -> true; (_) -> false end).\n"
                 "validate(Obj) ->\n"
@@ -166,7 +169,7 @@ prelude(#{imports := Imports, module := Module}) ->
                 "        Err -> Err\n"
                 "    end.\n\n"
                 "validate(_, [{[_|_] , _R}|_] = Acc) -> {error, Acc};\n"
-                "validate([], _) -> [];\n"
+                "validate([], _) -> ok;\n"
                 "validate(Objs, [{[] , R}|T]) -> validate(Objs, [R|T]);\n"
                 "validate([{CondFun, _, []}|T], Acc) when is_function(CondFun) -> validate(T, Acc);\n"
                 "validate([{CondFun, Field, [Obj|TObjs]}|T], Acc) when is_function(CondFun) ->\n"
