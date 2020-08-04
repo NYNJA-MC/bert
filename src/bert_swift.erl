@@ -68,7 +68,7 @@ case_rec({Atom,T}) ->
    %io:format("Swift ~p~n",[{List,T}]),
 class(List, T, #{dest_dir := Dest}) ->
    File = filename:join([Dest, "Model", atom_to_list(List)++".swift"]),
-   io:format("Generated Swift Model: ~p~n",[File]),
+   %% io:format("Generated Swift Model: ~p~n",[File]),
    case lists:concat([ io_lib:format("\n    var ~s",
         [ infer(Name,Args,atom_to_list(Field))])
      || {_,{_,_,{atom,_,Field},_Value},{type,_,Name,Args}} <- T ]) of
