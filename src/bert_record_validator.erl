@@ -30,7 +30,7 @@ parse_transform(Forms, Options) ->
                 disallowed => proplists:get_value(bert_disallowed, Options, [])},
 
     {Records, Validate} = directives(Forms, Context),
-    File = filename:join(Dest, "roster_validator.erl"),
+    File = filename:join(Dest, lists:concat([?MODULE, ".erl"])),
     filelib:ensure_dir(File),
     ExtraForms =
         erl_syntax:revert_forms(
