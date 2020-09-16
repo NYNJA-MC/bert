@@ -22,16 +22,13 @@ parse_transform(Forms, Options) ->
                        ({compile, Opt}, Acc) -> Acc ++ [Opt];
                        (_, Acc) -> Acc
                     end, Options, proplists:get_value(attributes, AF, [])),
+
+    %% We keep a copy of the generated source code, but that's actually not needed
     Dest = proplists:get_value(bert_erl, CompileOpts, ?ERL),
-
-    Context = #{dest_dir => filename:join(Dest, Module),
-                module => Module,
-                imports => [],
-                disallowed => proplists:get_value(bert_disallowed, Options, [])},
-
-    {Records, Validate} = directives(Forms, Context),
-    File = filename:join(Dest, lists:concat([?MODULE, ".erl"])),
+    File = filename:join(Dest, lists:concat([Module, ".erl"])),
     filelib:ensure_dir(File),
+
+    {Records, Validate} = directives(Forms),
     ExtraForms =
         erl_syntax:revert_forms(
           [?QUOTE(validate(Obj) ->
@@ -42,14 +39,14 @@ parse_transform(Forms, Options) ->
            ?QUOTE(validatable() -> _@Records@.),
            Validate]),
     NewForms = lists:keydelete(eof, 1, Forms) ++ [?QUOTE(-export([validate/1, validatable/0]).)] ++ ExtraForms,
-    file:write_file(File, erl_prettypr:format(erl_syntax:form_list(NewForms))),
+    file:write_file(File, ["%% Code generated !\n", erl_prettypr:format(erl_syntax:form_list(NewForms))]),
     io:format("Generated Models Validator: ~p~n", [File]),
     NewForms.
 
 %% The validate/2 function returns a list of [{Fields, Obj}] for the fields that have the wrong type
 %% in the record Obj. If a field itself contains a record, it decents and shows the fields that
 %% are wrong in that record.
-directives(Forms, Context) ->
+directives(Forms) ->
      Clauses =
         [?QUOTE((_, [{[_ | _] , _R} | _] = Acc) -> Acc),
          ?QUOTE(([], _) -> []),
@@ -59,6 +56,11 @@ directives(Forms, Context) ->
          ?QUOTE(([{Field, [Obj | TObjs]} | T], Acc) ->
                        case invalid_fields(Obj, [Field | Acc]) of
                            [] -> invalid_fields([{Field, TObjs} | T], Acc);
+                           Err -> Err
+                       end),
+         ?QUOTE(([{Field, Obj} | T], Acc) ->
+                       case invalid_fields(Obj, [Field | Acc]) of
+                           [] -> invalid_fields(T, Acc);
                            Err -> Err
                        end)
         ],
@@ -81,8 +83,9 @@ fields(RecordName, T) ->
               {_,{_,_,{atom,_,Field},_Value},{type,_,Name,Args}} -> {Field,{Name,Args}};
               {_,{_,_,{atom,_,Field}},{type,_,Name,Args}}        -> {Field,{Name,Args}};
               {_,{_,_,{atom,_,Field},{_,_,_Value}},Args}         -> {Field,Args}
-          end || Data <- T]
+          end || Data <- T ]
     catch _:Reason ->
+            %% no type or user/remote type, skip complete record validation
             _Warning = io_lib:format("warning: no validator generated for ~p (~p)\n", [RecordName, Reason]),
             []
     end.
@@ -147,7 +150,6 @@ get_type({list,[{type,_,record,[{atom,_,C}]}]}, Name, Var) ->
     RecVar = erl_syntax:variable(lists:concat([ erl_syntax:variable_literal(Var), "_", C ])),
     Clause = ?QUOTE(({_@Name@, _@Var}) when is_list(_@Var) ->
                            [ {_@Name@, _@RecVar} || _@RecVar <- _@Var, not is_record(_@RecVar, _@C@)]),
-    %% io:format("Clause Rec = ~s\n", [erl_prettypr:format(Clause)]),
     {Clause, {Name, C}};  %% These are handled later
 get_type({list,[{type,_,union, Union}]}, Name, Var) when is_list(Union) ->
     UVar = erl_syntax:variable(lists:concat([ erl_syntax:variable_literal(Var), "Element"])),
@@ -159,14 +161,13 @@ get_type({list,[{type,_,union, Union}]}, Name, Var) when is_list(Union) ->
                 ?QUOTE(({_@Name@, _@Var}) when is_list(_@Var) ->
                                        [ {_@Name@, _@UVar} || _@UVar <- _@Var, not (_@Guard) ])
         end,
-    %% io:format("Clause Union = ~s\n", [erl_prettypr:format(Clause)]),
     {Clause, []};
 get_type({list,_}, Name, Var) ->
     Clause = ?QUOTE(({_@Name@, _@Var}) when is_list(_@Var) -> []),
     {Clause, []};
-get_type({record,[{atom,_,Record}]}, Name, Var) ->
+get_type({record,[{atom, _, Record}]}, Name, Var) ->
     Clause = ?QUOTE(({_@Name@, _@Var}) when is_record(_@Var, _@Record@) -> []),
-    {Clause, []};
+    {Clause, {Name, Record}};
 get_type({term, []}, Name, Var) ->
     Clause = ?QUOTE(({_@Name@, _}) -> []),
     {Clause, []};
